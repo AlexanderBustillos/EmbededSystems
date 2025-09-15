@@ -1,0 +1,78 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "soc/soc_caps.h"
+#include "esp_log.h"
+
+//**********************************
+// Homework 6 CSCI 322
+// Alexander Bustillos
+// Hands-On Assignment #6 Bit-Bang ADC with Averaging
+//**********************************
+
+// Address taken from the manual
+int *SENS_SAR_MEAS_START1_SAR = (int *)0x3FF48854;
+
+#define NUM_SAMPLES 5 // Number of samples to average
+double rawData = 0;
+//Here i used Chat GPT to help me learn how to create calculated weighted averages to ouput, 
+//I hope thats play because its not anything about the main code.
+double Samples[NUM_SAMPLES] = {0}; // Array to hold recent samples
+double Weights[NUM_SAMPLES] = {0.1, 0.15, 0.2, 0.25, 0.3}; // Example weights
+int isDone;
+int SampleIndex = 0;
+
+double CalculateWeightedAverage() {
+    double WeightedSum = 0;
+    double WeightTotal = 0;
+    
+    // Calculate weighted average
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+        WeightedSum += Samples[i] * Weights[i];
+        WeightTotal += Weights[i];
+    }
+    
+    return WeightedSum / WeightTotal;
+}
+
+void app_main(void)
+{
+    printf("Start\n");
+    *SENS_SAR_MEAS_START1_SAR |= (1 << 31); // Turning on Pad Force
+    *SENS_SAR_MEAS_START1_SAR |= (1 << 19); //  SAR ADC1 pad enable bitmap; active only when reg_sar1_en_pad_force = 1
+    *SENS_SAR_MEAS_START1_SAR |= (1 << 18); // SAR ADC1 controller (in RTC) is started by SW
+    *SENS_SAR_MEAS_START1_SAR &= ~(1 << 17); // SAR ADC1 controller (in RTC) stops conversion
+    *SENS_SAR_MEAS_START1_SAR |= (1 << 17); // SAR ADC1 controller (in RTC) starts conversion
+
+    while(1) {
+		//creating mask to check if the 'flag' has been raised to indicate the code is done
+        isDone = *SENS_SAR_MEAS_START1_SAR & (1 << 16);
+        //checking if its done
+        if(isDone != 0) { 
+			//SAR ADC1 data. The last 16 bits are all data so we gather them here
+            rawData = *SENS_SAR_MEAS_START1_SAR & 0x0000FFFF; // Get the raw data
+            //printing what we get
+            printf("Instantaneous Data: %f\n", rawData);
+            
+            // Update the samples array with the new data
+            Samples[SampleIndex] = rawData;
+            SampleIndex = (SampleIndex + 1) % NUM_SAMPLES; // Move to the next sample index
+
+            // Calculate and print the weighted average
+            double WeightedAverage = CalculateWeightedAverage();
+            printf("Weighted Average: %f\n", WeightedAverage);
+			
+			double voltage = (4095-rawData)*50+142;
+			printf("Voltage: %f", voltage);
+			printf("mV\n");
+            // Reset SAR ADC
+            *SENS_SAR_MEAS_START1_SAR &= ~(1 << 17);
+            *SENS_SAR_MEAS_START1_SAR |= (1 << 17); 
+
+            // Delay for 1 second to achieve 1 Hz sampling
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+}
