@@ -1,0 +1,214 @@
+/*** Blink Example: Bit­Bang with Structs *************************************/
+/*
+   This example code is in the Public Domain (or CC0 licensed, at your option.)
+   Unless required by applicable law or agreed to in writing, this
+   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+   CONDITIONS OF ANY KIND, either express or implied.
+   This code was initially modified by Karl Castleton for EECE 237 / CSCI 322
+   Comments and further changes made by Michelle Mellenthin
+   Description: this was written initially for use to turn on/off LEDs which use
+the "simple GPIO" configuration on the ESP32 PICO­KIT. If you would like to
+modify this
+program for a future application, you may consider adding an I/O control aka
+Ioctl
+function to modify different masks for drive strength, etc... Register
+descriptions
+   can be found in the technical reference manual, absolute addresses around page
+59.
+   This program presently works for blinking GPIO pins 0 and 5.
+*/
+/******************* .h files ************************************************/
+// from the blink example, remove driver/gpio.h and led_strip.h
+#include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "sdkconfig.h"
+/******************* Constants ************************************************/
+static const char *TAG = "example"; // part of ESP_LOGI
+// Global Simple GPIO OUT pointers / masks ­­ ADD your constants here
+int *GPIO_OUT_REG = (int *)0x3FF44004; // technical ref manual page 59
+int *GPIO_IN_REG = (int *)0x3FF4403C;
+int cfgValue = 0x100;
+int cfgMask = ~(0x1ff);
+int *GPIO_ENABLE_REG = (int*)0x3FF44020;
+int driverMask = ~(4);
+int ORioMux = 0x00002000;
+int ANDioMux = 0xFFFFAB9D;
+/******************* My Structs************************************************/
+// struct to contain all relevant LED or simple GPIO info
+typedef struct _GPIO_OUT{
+  int s_led_state;
+  int pin;
+  int value;
+  int mask;
+  int *GPIO_FUNCn_OUT_SEL_CFG_REG;
+  int enValue;
+  // int enMask;
+  int *GPIO_PINn_REG; // can just OR mask this reg
+  //int driverValue = 4; // set open drain driver. see page 70
+} GPIO_OUT;
+typedef struct _GPIO_IN{
+  int s_led_state;
+  int pin;
+  int value;
+  int mask;
+  int *GPIO_FUNCn_IN_SEL_CFG_REG;
+  int enValue;
+  // int enMask;
+  int *GPIO_PINn_REG; // can just OR mask this reg
+  //int driverValue = 4; // set open drain driver. see page 70
+} GPIO_IN;
+/******************* My FCNs *************************************************/
+
+static void configure_led(GPIO_OUT *led)
+{
+    ESP_LOGI(TAG, "Example configured to blink GPIO led. Struct Flavor."); // pg60 tech manual
+	*(led->GPIO_FUNCn_OUT_SEL_CFG_REG) = cfgValue | (*(led->GPIO_FUNCn_OUT_SEL_CFG_REG) & cfgMask);
+	*GPIO_ENABLE_REG = led->enValue | (*GPIO_ENABLE_REG); //just or needed here
+	*(led->GPIO_PINn_REG) = *(led->GPIO_PINn_REG) & driverMask; 
+	
+}
+
+void init(GPIO_OUT *led, int n)
+{
+
+	led->pin = n; // n = the GPIO pin number that we want to use
+	led->s_led_state = 0;
+	led->value = 0x1 << n;
+	led->mask = ~(led->value);
+	led->GPIO_FUNCn_OUT_SEL_CFG_REG = (int *)0x3FF44530 + 0x4*n; //formula fromdocumentation
+	led->enValue = 0x1 << n;
+	led->GPIO_PINn_REG = (int *)(0x3FF44088 + 0x4*n);
+configure_led(led); // combining configuring with the init
+}
+
+
+static void blink_led(GPIO_OUT *led,int s_led_state) // added a line here to toggle for next time
+{
+    if (s_led_state){
+*GPIO_OUT_REG |= led->value;
+s_led_state = 0;
+    }
+    else {
+		*GPIO_OUT_REG &= led->mask;
+		s_led_state = 1;
+    }
+}
+
+static void configure_input(GPIO_IN *input)
+{
+    ESP_LOGI(TAG, "Example configured to blink GPIO led. Struct Flavor."); // pg60 tech manual
+	*(input->GPIO_FUNCn_IN_SEL_CFG_REG) = cfgValue | (*(input->GPIO_FUNCn_IN_SEL_CFG_REG) & cfgMask);
+	*GPIO_ENABLE_REG = input->mask & (*GPIO_ENABLE_REG); //just or needed here
+	*(input->GPIO_PINn_REG) = *(input->GPIO_PINn_REG) & driverMask; 
+	
+}
+
+void init_input(GPIO_IN *input, int n)
+{
+
+	input->pin = n; // n = the GPIO pin number that we want to use
+	input->value = 0x1 << n;
+	input->mask = ~(input->value);
+	input->GPIO_FUNCn_IN_SEL_CFG_REG = (int *)0x3FF44130 + 0x4*n; //formula fromdocumentation
+	input->enValue = 0x1 << n;
+	input->GPIO_PINn_REG = (int *)(0x3FF44088 + 0x4*n);
+configure_input(input); // combining configuring with the init
+}
+
+
+static int press_input(GPIO_IN *input) // added a line here to toggle for next time
+{
+    int GPIO_IN_COPY, GPIO_PIN_STAT;
+    GPIO_IN_COPY = *GPIO_IN_REG;
+    GPIO_PIN_STAT = GPIO_IN_COPY & input->mask;
+    ESP_LOGI(TAG,"D1");
+    if(GPIO_PIN_STAT == *GPIO_IN_REG)
+    {
+		ESP_LOGI(TAG,"T1");
+
+		return 1;
+	}else
+	{
+	return 0;
+	}
+	
+}
+
+
+// note: likely not needed for most simple GPIO modes
+/*void ioctl(GPIO_OUT *led, int mode){
+// could add something here to change the mode such as driver strength to
+update masks
+} */
+/******************* Main & Global Structs*************************************/
+GPIO_OUT led0, led1, led2;
+GPIO_IN input;
+void app_main(void)
+{
+    init(&led0,0);
+    init(&led1,22);
+    init(&led2,5);
+    init_input(&input, 4);
+    //NOTE: would need "configure_led(&led0);" but added into init function
+    //blink_led(&led0);
+    //blink_led(&led1);
+    //blink_led(&led2);
+    int counter = 0;    	   	
+    while (1) {
+        //blink_led(&led0);
+        //blink_led(&led1);
+        //blink_led(&led2);
+        ESP_LOGI(TAG, "Blinking %s!", led0.s_led_state == 1 ? "ON" : "OFF");
+   		ESP_LOGI(TAG, "LED %i and LED %i and LED %i", led0.pin, led1.pin, led2.pin);
+  		if(press_input(&input)==1)
+  		{
+			  vTaskDelay(10);
+			  
+			  counter ++;
+			  if(counter == 8)
+			  {
+				  blink_led(&led2,0);
+				  blink_led(&led1,0);
+				  blink_led(&led0,0);
+				  counter = 0;
+			  }
+		}
+			  
+
+    
+        if((counter & 1)!= 0)
+        {
+			ESP_LOGI(TAG,"C1");
+			blink_led(&led2,1);
+        	
+
+        }
+        else
+           {
+			   blink_led(&led2,0);
+		   }
+        
+        if((counter & 2)!= 0)
+        {
+			blink_led(&led1,1);
+		}
+       
+        else
+        {
+			blink_led(&led1,0);
+		}
+		
+        if((counter & 4)!= 0)
+        {
+			blink_led(&led0,1);
+		}
+        else
+        {
+			blink_led(&led0,0);
+		}
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    }
