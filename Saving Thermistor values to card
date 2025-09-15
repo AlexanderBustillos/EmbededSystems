@@ -1,0 +1,78 @@
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+
+#define THERMISTOR_PIN 36 // GPIO 39 (VN) connected to the thermistor
+#define FILE_PATH "/thermistor_data.txt" // Path to the file on SD card
+
+void writeDataToSD(File &file, int adcValue, unsigned long timestamp) {
+  String data = String(timestamp) + ", " + String(adcValue) + "\n";
+  if (file.print(data)) {
+    Serial.print("Data written: ");
+    Serial.println(data);
+  } else {
+    Serial.println("Write failed");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(THERMISTOR_PIN, INPUT);
+
+  while (!Serial) {
+    delay(10);
+  }
+
+  if (!SD.begin()) {
+    Serial.println("Card Mount Failed");
+    return;
+  }
+
+  uint8_t cardType = SD.cardType();
+  if (cardType == CARD_NONE) {
+    Serial.println("No SD card attached");
+    return;
+  }
+
+  Serial.print("SD Card Type: ");
+  if (cardType == CARD_MMC) {
+    Serial.println("MMC");
+  } else if (cardType == CARD_SD) {
+    Serial.println("SDSC");
+  } else if (cardType == CARD_SDHC) {
+    Serial.println("SDHC");
+  } else {
+    Serial.println("UNKNOWN");
+  }
+
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  Serial.printf("SD Card Size: %lluMB\n", cardSize);
+
+  // remove old file if exists
+  if (SD.exists(FILE_PATH)) {
+    SD.remove(FILE_PATH);
+  }
+}
+
+void loop() {
+  File file = SD.open(FILE_PATH, FILE_APPEND);
+  if (!file) {
+    Serial.println("Failed to open file for writing");
+    return;
+  }
+
+  unsigned long startTime = millis();
+  unsigned long currentTime;
+  
+  // collect data for 10 seconds
+  while ((currentTime = millis()) - startTime < 10000) {
+    int adcValue = analogRead(THERMISTOR_PIN);  // read ADC value
+    writeDataToSD(file, adcValue, currentTime); // write data with time
+    delay(100); // wait for 0.1 second
+  }
+
+  file.close(); // close the file after 10 seconds
+  Serial.println("Data collection completed. File closed.");
+
+  delay(100000); // delay 
+}
